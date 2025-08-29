@@ -1,0 +1,310 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+/* Enhanced Message Formatting */
+.formatted-message {
+  line-height: 1.6;
+  color: #e5e7eb;
+}
+
+.formatted-message p {
+  margin-bottom: 1rem;
+}
+
+.formatted-message h1 {
+  color: #fbbf24;
+  border-bottom: 2px solid #374151;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.formatted-message h2 {
+  color: #60a5fa;
+  border-bottom: 1px solid #374151;
+  padding-bottom: 0.25rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.formatted-message h3 {
+  color: #34d399;
+  margin-bottom: 0.5rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.formatted-message strong {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.formatted-message em {
+  color: #a78bfa;
+  font-style: italic;
+}
+
+.formatted-message .inline-code {
+  background-color: #374151;
+  color: #fbbf24;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.875rem;
+}
+
+.formatted-message li {
+  margin-bottom: 0.5rem;
+  padding-left: 0.5rem;
+  position: relative;
+}
+
+.formatted-message li::before {
+  content: "•";
+  color: #60a5fa;
+  font-weight: bold;
+  display: inline-block;
+  width: 1em;
+  margin-left: -1em;
+  position: absolute;
+  left: 0;
+}
+
+/* Message Container Styling */
+.formatted-message {
+  background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  border: 1px solid #374151;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* Enhanced Typography */
+.formatted-message p:last-child {
+  margin-bottom: 0;
+}
+
+.formatted-message h1:first-child {
+  margin-top: 0;
+}
+
+/* List Styling */
+.formatted-message ul, .formatted-message ol {
+  margin: 1rem 0;
+  padding-left: 1.5rem;
+}
+
+.formatted-message ol {
+  counter-reset: item;
+}
+
+.formatted-message ol li {
+  counter-increment: item;
+}
+
+.formatted-message ol li::before {
+  content: counter(item) ".";
+  color: #34d399;
+  font-weight: bold;
+  margin-right: 0.5rem;
+}
+
+/* Blockquote Styling */
+.formatted-message blockquote {
+  border-left: 4px solid #60a5fa;
+  padding-left: 1rem;
+  margin: 1rem 0;
+  font-style: italic;
+  color: #9ca3af;
+  background-color: #374151;
+  padding: 1rem;
+  border-radius: 0.5rem;
+}
+
+/* Table Styling */
+.formatted-message table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  background-color: #374151;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.formatted-message th,
+.formatted-message td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #4b5563;
+}
+
+.formatted-message th {
+  background-color: #1f2937;
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.formatted-message tr:hover {
+  background-color: #4b5563;
+}
+
+/* Horizontal Rule */
+.formatted-message hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #60a5fa, transparent);
+  margin: 2rem 0;
+}
+
+/* Code Block Styling */
+.hljs {
+  background-color: #1f2937 !important;
+  border: 1px solid #374151;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin: 1rem 0;
+  overflow-x: auto;
+}
+
+.hljs code {
+  color: #e5e7eb !important;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* Copy Button Styling */
+.copy-btn {
+  background-color: #374151 !important;
+  color: #e5e7eb !important;
+  border: 1px solid #4b5563;
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.copy-btn:hover {
+  background-color: #4b5563 !important;
+  border-color: #6b7280;
+}
+
+.copy-btn:active {
+  transform: scale(0.95);
+}
+
+/* Enhanced Code Block Styling */
+.enhanced-code-block {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  transition: all 0.2s ease-in-out;
+}
+
+.enhanced-code-block:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  transform: translateY(-1px);
+}
+
+.enhanced-code-block pre.hljs {
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  background-color: #1f2937 !important;
+}
+
+.enhanced-code-block .copy-btn,
+.enhanced-code-block button {
+  transition: all 0.2s ease-in-out;
+}
+
+.enhanced-code-block .copy-btn:hover,
+.enhanced-code-block button:hover {
+  transform: scale(1.05);
+}
+
+/* Code Block Header Styling */
+.enhanced-code-block .bg-gray-800 {
+  background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
+}
+
+/* Language Badge Styling */
+.enhanced-code-block .bg-gray-700 {
+  background: linear-gradient(135deg, #4b5563 0%, #6b7280 100%);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* Button Hover Effects */
+.enhanced-code-block button:hover {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Edit Mode Styling */
+.enhanced-code-block textarea {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.enhanced-code-block textarea:focus {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Save/Cancel Button Styling */
+.enhanced-code-block .bg-blue-600 {
+  background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+}
+
+.enhanced-code-block .bg-gray-600 {
+  background: linear-gradient(135deg, #4b5563 0%, #6b7280 100%);
+}
+
+.enhanced-code-block .bg-blue-600:hover {
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+}
+
+.enhanced-code-block .bg-gray-600:hover {
+  background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
+}

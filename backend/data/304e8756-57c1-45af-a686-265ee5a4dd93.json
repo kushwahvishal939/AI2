@@ -1,0 +1,12 @@
+[
+  {
+    "role": "user",
+    "content": "asdf",
+    "ts": 1756139076545
+  },
+  {
+    "role": "assistant",
+    "content": "Okay. Is there anything specific you wanted to discuss or any questions you had?\n",
+    "ts": 1756139076545
+  }
+]

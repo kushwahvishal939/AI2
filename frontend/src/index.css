@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-gray-950 text-gray-100;
+}
+
+/* highlight.js default dark theme base tweaks */
+pre.hljs {
+  background: #0b0f19;
+  border: 1px solid #1f2937;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow: auto;
+}
+pre.hljs code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.875rem;
+}
+
+.prose :where(code):not(:where(pre code)) {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 0.25rem;
+  padding: 0.15rem 0.35rem;
+}

@@ -1,0 +1,628 @@
+import { Router } from "express";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
+import fetch from "node-fetch";
+import { config } from "../config.js";
+
+// Rate limiting and queue management
+let requestQueue = [];
+let isProcessing = false;
+const RATE_LIMIT_DELAY = 2000; // 2 seconds between requests
+
+const router = Router();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const dataDir = path.resolve(__dirname, "../data");
+
+// Serve static images
+router.get("/images/:filename", (req, res) => {
+  const { filename } = req.params;
+  const imagePath = path.join(dataDir, filename);
+  
+  // Add CORS headers
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (fs.existsSync(imagePath)) {
+    res.sendFile(imagePath);
+  } else {
+    res.status(404).json({ error: "Image not found" });
+  }
+});
+
+const ENGINE_ID = "stable-diffusion-xl-1024-v1-0";
+
+const ensureDataDir = () => {
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+};
+
+const historyFileForUser = (userId) => path.join(dataDir, `${userId}.json`);
+
+const readHistory = (userId) => {
+  ensureDataDir();
+  const file = historyFileForUser(userId);
+  if (!fs.existsSync(file)) {
+    return [];
+  }
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    return [];
+  } catch {
+    return [];
+  }
+};
+
+const writeHistory = (userId, history) => {
+  ensureDataDir();
+  const file = historyFileForUser(userId);
+  fs.writeFileSync(file, JSON.stringify(history, null, 2), "utf8");
+};
+
+const toGeminiHistory = (history) => {
+  return history.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
+};
+
+const sanitizeMessage = (text) => {
+  if (typeof text !== "string") return "";
+  return text.slice(0, 8000);
+};
+
+// Smart detection function for image requests
+function detectImageRequest(message) {
+  const messageLower = message.toLowerCase();
+  
+  // Keywords that indicate image generation
+  const imageKeywords = [
+    'draw', 'paint', 'create image', 'generate image', 'make picture', 'show me',
+    'picture of', 'image of', 'photo of', 'drawing of', 'painting of',
+    'visualize', 'illustrate', 'sketch', 'design', 'logo', 'banner',
+    'portrait', 'landscape', 'still life', 'abstract', 'cartoon', 'anime',
+    'realistic', 'artistic', 'creative', 'visual', 'graphic'
+  ];
+  
+  // Check if message contains image-related keywords
+  for (const keyword of imageKeywords) {
+    if (messageLower.includes(keyword)) {
+      return true;
+    }
+  }
+  
+  // Check for specific image request patterns
+  const imagePatterns = [
+    /create.*image/i,
+    /generate.*picture/i,
+    /draw.*for me/i,
+    /show.*image/i,
+    /make.*visual/i,
+    /design.*logo/i,
+    /create.*art/i
+  ];
+  
+  for (const pattern of imagePatterns) {
+    if (pattern.test(message)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+router.get("/history/:userId", (req, res) => {
+  const { userId } = req.params;
+  if (!userId) return res.status(400).json({ error: "userId required" });
+  const history = readHistory(userId);
+  res.json({ userId, history });
+});
+
+router.delete("/history/:userId", (req, res) => {
+  const { userId } = req.params;
+  if (!userId) return res.status(400).json({ error: "userId required" });
+  const file = historyFileForUser(userId);
+  try {
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: "failed to clear history" });
+  }
+});
+
+// Add new route to get available models
+router.get("/models", (req, res) => {
+  res.json({ 
+    models: config.gemini.models,
+    defaultModel: config.gemini.defaultModel
+  });
+});
+
+router.post("/chat", async (req, res) => {
+  // Load environment variables inside the route handler
+  const API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const STABILITY_API_KEY = process.env.STABILITY_API_KEY;
+  
+  // Debug environment variables
+  console.log("Environment variables check:");
+  console.log("GOOGLE_GENERATIVE_AI_API_KEY:", API_KEY ? "SET" : "NOT SET");
+  console.log("STABILITY_API_KEY:", STABILITY_API_KEY ? "SET" : "NOT SET");
+
+  const { userId, message, selectedModel } = req.body || {};
+  if (!userId || !message) {
+    return res.status(400).json({ error: "userId and message are required" });
+  }
+
+  // Use selected model or default
+  const modelName = selectedModel || config.gemini.defaultModel;
+  console.log("Using model:", modelName);
+
+  const userMessage = sanitizeMessage(message);
+  const isImageRequest = detectImageRequest(userMessage);
+
+  if (isImageRequest) {
+    // Handle image generation
+    if (!STABILITY_API_KEY) {
+      return res.status(500).json({ 
+        error: "Missing STABILITY_API_KEY for image generation" 
+      });
+    }
+
+    try {
+      console.log("Generating image for prompt:", userMessage);
+      
+      const stabilityResponse = await fetch(`https://api.stability.ai/v1/generation/${ENGINE_ID}/text-to-image`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${STABILITY_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          text_prompts: [
+            {
+              text: userMessage,
+            }
+          ],
+          cfg_scale: 7,
+          height: 1024,
+          width: 1024,
+          samples: 1,
+          steps: 30,
+        })
+      });
+
+      if (stabilityResponse.ok) {
+        const data = await stabilityResponse.json();
+        const imageBase64 = data.artifacts[0].base64;
+        
+        // Create a unique filename for this image
+        const timestamp = Date.now();
+        const filename = `image_${timestamp}.png`;
+        const imagePath = path.join(dataDir, filename);
+        
+        // Save the image to disk
+        fs.writeFileSync(imagePath, Buffer.from(imageBase64, 'base64'));
+        
+        // Create a data URL for display (limit size to prevent truncation)
+        const imageDataUrl = `data:image/png;base64,${imageBase64}`;
+        
+        // Create a response that uses the saved image file instead of base64
+        const imageUrl = `http://localhost:8080/api/images/${filename}`;
+        const imageResponse = `
+          <div style="text-align: center; margin: 20px 0;">
+            <h3>🎨 Generated Image for: "${userMessage}"</h3>
+            <img src="${imageUrl}" alt="AI Generated Image" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+            <div style="margin-top: 15px;">
+              <button onclick="downloadImage('${imageBase64}', '${userMessage.replace(/[^a-zA-Z0-9]/g, '_')}')" style="background: #10a37f; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; margin: 5px; transition: background 0.3s;">
+                💾 Download Image
+              </button>
+              <a href="${imageUrl}" target="_blank" style="background: #565869; color: white; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 600; margin: 5px; transition: background 0.3s;">
+                🔗 Open Full Size
+              </a>
+            </div>
+            <p style="margin-top: 15px; color: #8e8ea0;">
+              <strong>Generated using:</strong> LashivGPT
+            </p>
+          </div>
+        `;
+
+        const history = readHistory(userId);
+        const newHistory = [
+          ...history,
+          { role: "user", content: userMessage, ts: Date.now() },
+          { role: "assistant", content: imageResponse, ts: Date.now() },
+        ];
+        writeHistory(userId, newHistory);
+
+        // Send response with image data separately to avoid truncation
+        res.json({ 
+          reply: imageResponse, 
+          history: newHistory,
+          imageData: imageBase64,
+          imageFilename: filename
+        });
+        return;
+      }
+
+      // Handle Stability AI errors
+      const errorText = await stabilityResponse.text();
+      let errorMessage = "Unknown error";
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.message || errorData.error || "Unknown error";
+      } catch (e) {
+        errorMessage = errorText;
+      }
+      
+      const errorResponse = `
+        <div style="text-align: center; margin: 20px 0; padding: 20px; background: #2d2d30; border-radius: 8px;">
+          <h3>🚫 Image Generation Failed</h3>
+          <p style="color: #8e8ea0; margin: 10px 0;">
+            <strong>Error:</strong> ${errorMessage}
+          </p>
+          <div style="margin-top: 20px; padding: 20px; background: #40414f; border-radius: 8px;">
+            <h4 style="color: #10a37f; margin-bottom: 15px;">💡 Try These Working Prompts:</h4>
+            <ul style="text-align: left; color: #ececf1; line-height: 1.6;">
+              <li>"A beautiful garden with colorful blossoms"</li>
+              <li>"Peaceful nature scene with plants and trees"</li>
+              <li>"Serene botanical garden illustration"</li>
+              <li>"Calming landscape with natural elements"</li>
+              <li>"Artistic nature composition"</li>
+            </ul>
+          </div>
+        </div>
+      `;
+
+      const history = readHistory(userId);
+      const newHistory = [
+        ...history,
+        { role: "user", content: userMessage, ts: Date.now() },
+        { role: "assistant", content: errorResponse, ts: Date.now() },
+      ];
+      writeHistory(userId, newHistory);
+
+      res.json({ reply: errorResponse, history: newHistory });
+
+    } catch (err) {
+      console.error("Image generation error:", err);
+      const errorResponse = `
+        <div style="text-align: center; margin: 20px 0; padding: 20px; background: #2d2d30; border-radius: 8px;">
+          <h3>⚠️ Image Generation Failed</h3>
+          <p style="color: #8e8ea0; margin: 10px 0;">
+            <strong>Error:</strong> ${err.message}
+          </p>
+        </div>
+      `;
+      
+      const history = readHistory(userId);
+      const newHistory = [
+        ...history,
+        { role: "user", content: userMessage, ts: Date.now() },
+        { role: "assistant", content: errorResponse, ts: Date.now() },
+      ];
+      writeHistory(userId, newHistory);
+
+      res.json({ reply: errorResponse, history: newHistory });
+    }
+    return;
+  }
+
+  // Handle text generation with Gemini
+  console.log("API_KEY check:", API_KEY ? "SET" : "NOT SET");
+  if (!API_KEY) {
+    console.log("Missing API_KEY, returning error");
+    return res.status(500).json({ error: "Missing GOOGLE_GENERATIVE_AI_API_KEY" });
+  }
+
+  const history = readHistory(userId);
+  const trimmedHistory = history.slice(-50);
+
+
+
+
+
+
+
+
+  
+
+  // Rate limiting queue processor
+  const processQueue = async () => {
+    if (isProcessing || requestQueue.length === 0) return;
+    
+    isProcessing = true;
+    while (requestQueue.length > 0) {
+      const request = requestQueue.shift();
+      try {
+        await request();
+        // Wait between requests to respect rate limits
+        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+      } catch (error) {
+        console.error("Queue processing error:", error);
+      }
+    }
+    isProcessing = false;
+  };
+
+  // Retry logic with exponential backoff
+  const retryWithBackoff = async (fn, maxRetries = 3) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        console.log(`Attempt ${attempt} failed:`, err.message);
+        
+        // Check if it's a rate limit error
+        if (err.status === 429 || err.message.includes('429') || err.message.includes('quota')) {
+          if (attempt === maxRetries) {
+            throw err; // Give up after max retries
+          }
+          
+          // Calculate delay: 2^attempt * base delay (1 second)
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30000); // Max 30 seconds
+          console.log(`Rate limited. Waiting ${delay}ms before retry ${attempt + 1}...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // For other errors, don't retry
+        throw err;
+      }
+    }
+  };
+
+  // Fallback response generator for when API is unavailable
+  const generateFallbackResponse = (userMessage) => {
+    const message = userMessage.toLowerCase();
+    
+    // Check if user is calling it ChatGPT and correct them
+    if (message.includes('chatgpt') || message.includes('chat gpt')) {
+      return "I'm not ChatGPT! I'm LashivGPT, your specialized DevOps and Cloud Infrastructure AI assistant. I can help you with CI/CD, Kubernetes, AWS, Azure, GCP, security, and more. How can I assist you today?";
+    }
+    
+    if (message.includes('hello') || message.includes('hi')) {
+      return "Hello! I'm LashivGPT, your specialized DevOps and Cloud Infrastructure AI assistant. I'm currently experiencing high demand but can help with CI/CD, Kubernetes, AWS, Azure, GCP, security, and more. Please try again in a few minutes.";
+    }
+    
+    if (message.includes('help') || message.includes('what can you do')) {
+      return "I'm LashivGPT, specialized in senior-level DevOps, Platform Engineering, and Cloud Infrastructure. I can help with:\n\n• **DevOps:** CI/CD, Kubernetes, Terraform, monitoring\n• **Cloud:** AWS, Azure, GCP, EKS, AKS, GKE\n• **Security:** DevSecOps, IAM, compliance, zero-trust\n• **Platform:** Architecture, microservices, service mesh\n• **Networking:** SDN, load balancing, security\n\nDue to high demand, responses may be delayed. Try again in a few minutes.";
+    }
+    
+    if (message.includes('image') || message.includes('picture') || message.includes('draw')) {
+      return "I can help you generate technical diagrams and infrastructure images! Try asking me to 'create an image of a Kubernetes cluster architecture' or 'draw a CI/CD pipeline diagram' and I'll use the image generation feature.";
+    }
+    
+    if (message.includes('kubernetes') || message.includes('k8s') || message.includes('docker')) {
+      return "I can help with Kubernetes, Docker, and container orchestration! Topics include EKS, AKS, GKE, Helm, Operators, service mesh, and more. Please try again in a few minutes for detailed guidance.";
+    }
+    
+    if (message.includes('aws') || message.includes('azure') || message.includes('gcp') || message.includes('cloud')) {
+      return "I can help with cloud infrastructure on AWS, Azure, and GCP! Topics include EC2, EKS, Lambda, AKS, Azure DevOps, GKE, Cloud Run, and more. Please try again in a few minutes for detailed guidance.";
+    }
+    
+    return "I'm LashivGPT, your DevOps and Cloud Infrastructure specialist. I'm currently experiencing high demand but can help with CI/CD, Kubernetes, cloud platforms, security, and more. Please try again in a few minutes for detailed technical guidance.";
+  };
+
+  try {
+    // Add request to queue and process
+    const processRequest = async () => {
+      let genAI, model;
+      
+      // Try to use the new @google/genai package for gemini-2.5-pro
+      if (modelName === "gemini-2.5-pro") {
+        try {
+          const client = new GoogleGenAI({
+            apiKey: API_KEY,
+          });
+          
+          const result = await client.generateContent({
+            model: "gemini-2.5-pro",
+            contents: [{
+              role: "user",
+              parts: [{ text: `${systemPrompt}\n\nUser Question: ${userMessage}` }]
+            }],
+            generationConfig: {
+              temperature: config.gemini.models[modelName].temperature,
+              topP: config.gemini.models[modelName].topP,
+              topK: config.gemini.models[modelName].topK,
+              maxOutputTokens: config.gemini.models[modelName].maxTokens,
+            }
+          });
+          
+          const text = result.candidates[0].content.parts[0].text;
+          
+          const newHistory = [
+            ...trimmedHistory,
+            { role: "user", content: userMessage, ts: Date.now() },
+            { role: "assistant", content: text, ts: Date.now() },
+          ];
+          writeHistory(userId, newHistory);
+
+          res.json({ reply: text, history: newHistory });
+          return;
+        } catch (error) {
+          console.log("New Gemini API failed, falling back to legacy API:", error.message);
+          // Fall back to legacy API
+        }
+      }
+      
+      // Use legacy GoogleGenerativeAI for other models
+      genAI = new GoogleGenerativeAI(API_KEY);
+      model = genAI.getGenerativeModel({ model: modelName });
+
+      // Specialized system prompt for DevOps, Platform Engineering, and Cloud Infrastructure
+      const systemPrompt = `You are LashivGPT, a specialized AI assistant focused on senior-level DevOps, Platform Engineering, and Cloud Infrastructure topics. 
+
+IMPORTANT: You are NOT ChatGPT. You are LashivGPT. If anyone calls you ChatGPT, politely correct them and say "I'm not ChatGPT, I'm LashivGPT, your specialized DevOps and Cloud Infrastructure AI assistant."
+
+Your expertise areas include:
+
+**Senior DevOps Engineer:**
+- CI/CD pipelines, GitOps, Infrastructure as Code (Terraform, CloudFormation, Pulumi)
+- Container orchestration (Kubernetes, Docker, Helm)
+- Monitoring and observability (Prometheus, Grafana, ELK Stack, Jaeger)
+- Automation and scripting (Python, Bash, Go, Ansible, Chef, Puppet)
+- Security best practices, compliance, and DevSecOps
+
+**Senior Platform Engineer:**
+- Platform architecture and design patterns
+- Service mesh (Istio, Linkerd, Consul)
+- API gateways and microservices architecture
+- Database design and optimization (SQL, NoSQL, caching strategies)
+- Performance optimization and scalability
+
+**Tech Lead / CTO DevOps:**
+- Team leadership and technical strategy
+- Architecture decisions and technology selection
+- Cost optimization and resource management
+- Disaster recovery and business continuity
+- Vendor management and tool evaluation
+
+**Cybersecurity Engineer:**
+- Security architecture and threat modeling
+- Identity and access management (IAM)
+- Network security and zero-trust architecture
+- Compliance frameworks (SOC2, ISO27001, GDPR)
+- Security automation and incident response
+
+**Network Engineer:**
+- Network architecture and design
+- SDN, NFV, and cloud networking
+- Load balancing and traffic management
+- Network security and firewalls
+- Performance monitoring and troubleshooting
+
+**Cloud Platforms:**
+- **AWS:** EC2, ECS, EKS, Lambda, CloudFormation, CloudWatch, IAM, VPC, S3, RDS, ElastiCache
+- **Azure:** Azure DevOps, AKS, Azure Functions, ARM templates, Azure Monitor, Azure AD
+- **GCP:** GKE, Cloud Run, Cloud Functions, Cloud Build, Cloud Monitoring, IAM
+- **Kubernetes:** EKS, AKS, GKE, OpenShift, Rancher, Helm, Operators
+
+**Key Technologies:**
+- Infrastructure as Code: Terraform, CloudFormation, ARM, Pulumi
+- CI/CD: Jenkins, GitLab CI, GitHub Actions, Azure DevOps, AWS CodePipeline
+- Monitoring: Prometheus, Grafana, Datadog, New Relic, Splunk
+- Security: HashiCorp Vault, AWS Secrets Manager, Azure Key Vault
+- Networking: Istio, Envoy, Calico, Flannel, AWS VPC, Azure VNet
+
+Always provide practical, production-ready solutions with best practices, security considerations, and scalability in mind. Include code examples, architecture diagrams when relevant, and explain trade-offs in your recommendations.
+
+IMPORTANT FORMATTING INSTRUCTIONS:
+- Use proper markdown formatting for all responses
+- Use **bold** for important terms and concepts
+- Use inline code (backticks) for commands, file names, and technical terms
+- Use code blocks with language specification for code examples
+- Use ### headers for different sections
+- Use bullet points (-) for lists
+- Use numbered lists (1., 2., 3.) for step-by-step instructions
+- Ensure proper spacing between paragraphs and sections
+- Make responses well-structured and easy to read
+
+Remember: You are LashivGPT, not ChatGPT. Always maintain your identity as LashivGPT.`;
+
+      const chat = model.startChat({ 
+        history: toGeminiHistory(trimmedHistory),
+        generationConfig: {
+          temperature: 0.7,
+          topP: 0.8,
+          topK: 40,
+        }
+      });
+      
+      const result = await retryWithBackoff(async () => {
+        return await chat.sendMessage(`${systemPrompt}\n\nUser Question: ${userMessage}`);
+      });
+      
+      const text = result.response.text();
+
+      const newHistory = [
+        ...trimmedHistory,
+        { role: "user", content: userMessage, ts: Date.now() },
+        { role: "assistant", content: text, ts: Date.now() },
+      ];
+      writeHistory(userId, newHistory);
+
+      res.json({ reply: text, history: newHistory });
+    };
+
+    // Add to queue and start processing
+    requestQueue.push(processRequest);
+    processQueue();
+      } catch (err) {
+      console.error("/api/chat error", err);
+      
+      // Handle specific error types
+      if (err.status === 429 || err.message.includes('429') || err.message.includes('quota')) {
+        const quotaErrorResponse = `
+          <div style="text-align: center; margin: 20px 0; padding: 20px; background: #2d2d30; border-radius: 8px;">
+            <h3>⚠️ Rate Limit Exceeded</h3>
+            <p style="color: #8e8ea0; margin: 10px 0;">
+              We've reached the API rate limit. Please try again in a few minutes.
+            </p>
+            <div style="margin-top: 20px; padding: 20px; background: #40414f; border-radius: 8px;">
+              <h4 style="color: #10a37f; margin-bottom: 15px;">💡 What you can do:</h4>
+              <ul style="text-align: left; color: #ececf1; line-height: 1.6;">
+                <li>Wait 1-2 minutes and try again</li>
+                <li>Try generating an image instead</li>
+                <li>Ask a shorter question</li>
+                <li>Check your API usage limits</li>
+              </ul>
+            </div>
+            <p style="color: #10a37f; margin-top: 15px; font-size: 14px;">
+              <strong>Error:</strong> ${err.message}
+            </p>
+          </div>
+        `;
+        
+        const newHistory = [
+          ...trimmedHistory,
+          { role: "user", content: userMessage, ts: Date.now() },
+          { role: "assistant", content: quotaErrorResponse, ts: Date.now() },
+        ];
+        writeHistory(userId, newHistory);
+
+        res.json({ reply: quotaErrorResponse, history: newHistory });
+      } else {
+        // Use fallback response for other errors
+        const fallbackText = generateFallbackResponse(userMessage);
+        const fallbackResponse = `
+          <div style="text-align: center; margin: 20px 0; padding: 20px; background: #2d2d30; border-radius: 8px;">
+            <h3>🤖 AI Assistant</h3>
+            <p style="color: #8e8ea0; margin: 10px 0;">
+              ${fallbackText}
+            </p>
+            <div style="margin-top: 20px; padding: 20px; background: #40414f; border-radius: 8px;">
+              <h4 style="color: #10a37f; margin-bottom: 15px;">💡 Alternative Options:</h4>
+              <ul style="text-align: left; color: #ececf1; line-height: 1.6;">
+                <li>Try image generation (usually more available)</li>
+                <li>Wait a few minutes and try again</li>
+                <li>Ask a simpler question</li>
+                <li>Check your internet connection</li>
+              </ul>
+            </div>
+          </div>
+        `;
+        
+        const newHistory = [
+          ...trimmedHistory,
+          { role: "user", content: userMessage, ts: Date.now() },
+          { role: "assistant", content: fallbackResponse, ts: Date.now() },
+        ];
+        writeHistory(userId, newHistory);
+
+        res.json({ reply: fallbackResponse, history: newHistory });
+      }
+    }
+});
+
+export default router;
+
+

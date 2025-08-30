@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronDown, Brain, Zap, Crown } from 'lucide-react';
+import { getApiUrl } from '../config';
 
 interface Model {
   name: string;
@@ -26,45 +27,21 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [defaultModel, setDefaultModel] = useState<string>('');
 
   useEffect(() => {
-    // Fetch available models from backend
-    fetch('http://localhost:8080/api/models')
-      .then(response => response.json())
-      .then(data => {
-        setModels(data.models);
-        setDefaultModel(data.defaultModel);
-      })
-      .catch(error => {
-        console.error('Failed to fetch models:', error);
-        // Fallback models if API fails - using brand names
-        setModels({
-          "gemini-2.0-flash": {
-            name: "LashivGPT Fast",
-            description: "Quick and efficient responses for fast interactions",
-            maxTokens: 8192,
-            temperature: 0.7,
-            topP: 0.8,
-            topK: 40,
-          },
-          "gemini-2.5-pro": {
-            name: "LashivGPT Pro",
-            description: "Most advanced AI with enhanced reasoning capabilities",
-            maxTokens: 32768,
-            temperature: 0.7,
-            topP: 0.8,
-            topK: 40,
-          },
-          "gemini-1.5-pro": {
-            name: "LashivGPT Standard",
-            description: "Balanced performance with good cost efficiency",
-            maxTokens: 16384,
-            temperature: 0.7,
-            topP: 0.8,
-            topK: 40,
-          }
-        });
-        setDefaultModel("gemini-2.0-flash");
-      });
-  }, []);
+    const fetchModels = async () => {
+      try {
+        const response = await fetch(getApiUrl('/models'))
+        if (response.ok) {
+          const data = await response.json()
+          setModels(data.models || {})
+          setDefaultModel(data.defaultModel || '')
+        }
+      } catch (error) {
+        console.error('Error fetching models:', error)
+      }
+    }
+
+    fetchModels()
+  }, [])
 
   const getModelIcon = (modelKey: string) => {
     switch (modelKey) {

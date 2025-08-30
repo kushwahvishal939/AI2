@@ -6,6 +6,11 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { GoogleGenAI } from "@google/genai";
 import fetch from "node-fetch";
 import { config } from "../config.js";
+import multer from 'multer'
+import dotenv from 'dotenv'
+
+// Load environment variables
+dotenv.config()
 
 // Rate limiting and queue management
 let requestQueue = [];
@@ -17,6 +22,59 @@ const router = Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dataDir = path.resolve(__dirname, "../data");
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = './uploads'
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true })
+    }
+    cb(null, uploadDir)
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname))
+  }
+})
+
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  },
+  fileFilter: function (req, file, cb) {
+    // Allow specific file types
+    const allowedTypes = [
+      'application/pdf',
+      'text/plain',
+      'text/markdown',
+      'text/csv',
+      'application/json',
+      'application/xml',
+      'text/html',
+      'text/css',
+      'text/javascript',
+      'application/javascript',
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    ]
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true)
+    } else {
+      cb(new Error('File type not supported'), false)
+    }
+  }
+})
 
 // Serve static images
 router.get("/images/:filename", (req, res) => {
@@ -146,7 +204,7 @@ router.get("/models", (req, res) => {
   });
 });
 
-router.post("/chat", async (req, res) => {
+router.post("/chat", upload.single('file'), async (req, res) => {
   // Load environment variables inside the route handler
   const API_KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   const STABILITY_API_KEY = process.env.STABILITY_API_KEY;
@@ -157,6 +215,8 @@ router.post("/chat", async (req, res) => {
   console.log("STABILITY_API_KEY:", STABILITY_API_KEY ? "SET" : "NOT SET");
 
   const { userId, message, selectedModel } = req.body || {};
+  const uploadedFile = req.file;
+  
   if (!userId || !message) {
     return res.status(400).json({ error: "userId and message are required" });
   }
@@ -215,7 +275,7 @@ router.post("/chat", async (req, res) => {
         const imageDataUrl = `data:image/png;base64,${imageBase64}`;
         
         // Create a response that uses the saved image file instead of base64
-        const imageUrl = `http://localhost:8080/api/images/${filename}`;
+        const imageUrl = `${config.urls.api.replace('/api', '')}/api/images/${filename}`;
         const imageResponse = `
           <div style="text-align: center; margin: 20px 0;">
             <h3>🎨 Generated Image for: "${userMessage}"</h3>
@@ -322,6 +382,35 @@ router.post("/chat", async (req, res) => {
     return res.status(500).json({ error: "Missing GOOGLE_GENERATIVE_AI_API_KEY" });
   }
 
+  // Process uploaded file if present
+  let fileContent = '';
+  if (uploadedFile) {
+    try {
+      console.log("Processing uploaded file:", uploadedFile.originalname);
+      
+      if (uploadedFile.mimetype === 'application/pdf') {
+        // For PDFs, we'll need to extract text (simplified for now)
+        fileContent = `[PDF File: ${uploadedFile.originalname}] - Content will be processed by AI model`;
+      } else if (uploadedFile.mimetype.startsWith('text/') || uploadedFile.mimetype.includes('json') || uploadedFile.mimetype.includes('xml')) {
+        // For text files, read the content
+        fileContent = fs.readFileSync(uploadedFile.path, 'utf8');
+      } else if (uploadedFile.mimetype.startsWith('image/')) {
+        // For images, we'll describe them (simplified for now)
+        fileContent = `[Image File: ${uploadedFile.originalname}] - Image content will be analyzed by AI model`;
+      } else if (uploadedFile.mimetype.includes('word') || uploadedFile.mimetype.includes('excel') || uploadedFile.mimetype.includes('powerpoint')) {
+        // For Office documents (simplified for now)
+        fileContent = `[Office Document: ${uploadedFile.originalname}] - Document content will be processed by AI model`;
+      }
+      
+      // Clean up uploaded file after processing
+      fs.unlinkSync(uploadedFile.path);
+      
+    } catch (error) {
+      console.error("Error processing uploaded file:", error);
+      fileContent = `[Error processing file: ${uploadedFile.originalname}]`;
+    }
+  }
+
   const history = readHistory(userId);
   const trimmedHistory = history.slice(-50);
 
@@ -416,49 +505,7 @@ router.post("/chat", async (req, res) => {
     const processRequest = async () => {
       let genAI, model;
       
-      // Try to use the new @google/genai package for gemini-2.5-pro
-      if (modelName === "gemini-2.5-pro") {
-        try {
-          const client = new GoogleGenAI({
-            apiKey: API_KEY,
-          });
-          
-          const result = await client.generateContent({
-            model: "gemini-2.5-pro",
-            contents: [{
-              role: "user",
-              parts: [{ text: `${systemPrompt}\n\nUser Question: ${userMessage}` }]
-            }],
-            generationConfig: {
-              temperature: config.gemini.models[modelName].temperature,
-              topP: config.gemini.models[modelName].topP,
-              topK: config.gemini.models[modelName].topK,
-              maxOutputTokens: config.gemini.models[modelName].maxTokens,
-            }
-          });
-          
-          const text = result.candidates[0].content.parts[0].text;
-          
-          const newHistory = [
-            ...trimmedHistory,
-            { role: "user", content: userMessage, ts: Date.now() },
-            { role: "assistant", content: text, ts: Date.now() },
-          ];
-          writeHistory(userId, newHistory);
-
-          res.json({ reply: text, history: newHistory });
-          return;
-        } catch (error) {
-          console.log("New Gemini API failed, falling back to legacy API:", error.message);
-          // Fall back to legacy API
-        }
-      }
-      
-      // Use legacy GoogleGenerativeAI for other models
-      genAI = new GoogleGenerativeAI(API_KEY);
-      model = genAI.getGenerativeModel({ model: modelName });
-
-      // Specialized system prompt for DevOps, Platform Engineering, and Cloud Infrastructure
+      // Define system prompt at the top so it's available for both API paths
       const systemPrompt = `You are LashivGPT, a specialized AI assistant focused on senior-level DevOps, Platform Engineering, and Cloud Infrastructure topics. 
 
 IMPORTANT: You are NOT ChatGPT. You are LashivGPT. If anyone calls you ChatGPT, politely correct them and say "I'm not ChatGPT, I'm LashivGPT, your specialized DevOps and Cloud Infrastructure AI assistant."
@@ -524,9 +571,61 @@ IMPORTANT FORMATTING INSTRUCTIONS:
 - Use bullet points (-) for lists
 - Use numbered lists (1., 2., 3.) for step-by-step instructions
 - Ensure proper spacing between paragraphs and sections
+- Add blank lines between different sections for better readability
+- Use blockquotes (>) for important notes or warnings
+- Use horizontal rules (---) to separate major sections
 - Make responses well-structured and easy to read
+- Maintain consistent spacing throughout the response
 
 Remember: You are LashivGPT, not ChatGPT. Always maintain your identity as LashivGPT.`;
+      
+      // Try to use the new @google/genai package for gemini-2.5-pro
+      if (modelName === "gemini-2.5-pro") {
+        try {
+          const client = new GoogleGenAI({
+            apiKey: API_KEY,
+          });
+          
+          // Prepare the message with file content if available
+          let fullMessage = userMessage;
+          if (fileContent) {
+            fullMessage = `File Content:\n${fileContent}\n\nUser Question: ${userMessage}`;
+          }
+
+          const result = await client.generateContent({
+            model: "gemini-2.5-pro",
+            contents: [{
+              role: "user",
+              parts: [{ text: `${systemPrompt}\n\n${fullMessage}` }]
+            }],
+            generationConfig: {
+              temperature: config.gemini.models[modelName].temperature,
+              topP: config.gemini.models[modelName].topP,
+              topK: config.gemini.models[modelName].topK,
+              maxOutputTokens: config.gemini.models[modelName].maxTokens,
+            }
+          });
+          
+          const text = result.candidates[0].content.parts[0].text;
+          
+          const newHistory = [
+            ...trimmedHistory,
+            { role: "user", content: userMessage, ts: Date.now() },
+            { role: "assistant", content: text, ts: Date.now() },
+          ];
+          writeHistory(userId, newHistory);
+
+          res.json({ reply: text, history: newHistory });
+          return;
+        } catch (error) {
+          console.log("New Gemini API failed, falling back to legacy API:", error.message);
+          // Fall back to legacy API
+        }
+      }
+      
+      // Use legacy GoogleGenerativeAI for other models
+      genAI = new GoogleGenerativeAI(API_KEY);
+      model = genAI.getGenerativeModel({ model: modelName });
 
       const chat = model.startChat({ 
         history: toGeminiHistory(trimmedHistory),
@@ -537,8 +636,14 @@ Remember: You are LashivGPT, not ChatGPT. Always maintain your identity as Lashi
         }
       });
       
+      // Prepare the message with file content if available
+      let fullMessage = userMessage;
+      if (fileContent) {
+        fullMessage = `File Content:\n${fileContent}\n\nUser Question: ${userMessage}`;
+      }
+
       const result = await retryWithBackoff(async () => {
-        return await chat.sendMessage(`${systemPrompt}\n\nUser Question: ${userMessage}`);
+        return await chat.sendMessage(`${systemPrompt}\n\n${fullMessage}`);
       });
       
       const text = result.response.text();
@@ -592,7 +697,7 @@ Remember: You are LashivGPT, not ChatGPT. Always maintain your identity as Lashi
         res.json({ reply: quotaErrorResponse, history: newHistory });
       } else {
         // Use fallback response for other errors
-        const fallbackText = generateFallbackResponse(userMessage);
+        const fallbackText = generateFallbackResponse(userMessage, fileContent);
         const fallbackResponse = `
           <div style="text-align: center; margin: 20px 0; padding: 20px; background: #2d2d30; border-radius: 8px;">
             <h3>🤖 AI Assistant</h3>

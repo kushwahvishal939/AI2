@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js'
+
+
 import copy from 'copy-to-clipboard'
-import { Menu, X, MoreVertical, Share2, Edit3, Archive, Trash2, User, Settings, LogOut, Brain } from 'lucide-react'
+import { Menu, X, MoreVertical, Share2, Edit3, Archive, Trash2, User, Settings, LogOut } from 'lucide-react'
 import ModelSelector from './components/ModelSelector'
-import CodeEditor from './components/CodeEditor'
-import React from 'react'
-import ReactDOM from 'react-dom/client'
+import { getApiUrl } from './config'
 
 type ChatMessage = {
   role: 'user' | 'assistant'
@@ -14,7 +12,7 @@ type ChatMessage = {
   ts?: number
 }
 
-const apiBase = 'http://localhost:8080/api'
+const apiBase = getApiUrl()
 
 type Conversation = {
   id: string
@@ -57,23 +55,58 @@ window.downloadImage = function(base64: string, filename: string) {
   document.body.removeChild(link)
 }
 
-const md = new MarkdownIt({
-  html: false,
-  linkify: true,
-  breaks: true,
-  highlight: function (str: string, lang: string) {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        return '<pre class="hljs"><code>' + hljs.highlight(str, { language: lang, ignoreIllegals: true }).value + '</code></pre>'
-      } catch (__) {}
-    }
-    const escaped = String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-    return '<pre class="hljs"><code>' + escaped + '</code></pre>'
-  },
-})
+function renderMessage(content: string) {
+  if (content.includes('<div') || content.includes('<img') || content.includes('<button') || content.includes('<a ')) {
+    // If it's HTML content, return it directly without markdown processing
+    return content
+  }
+  
+  try {
+    // Enhanced markdown rendering with better formatting and spacing
+    const enhancedContent = content
+      // First, normalize line breaks and ensure proper spacing
+      .replace(/\r\n/g, '\n') // Normalize Windows line breaks
+      .replace(/\n{3,}/g, '\n\n') // Limit consecutive line breaks to max 2
+      .replace(/\n\n/g, '\n\n') // Ensure proper paragraph breaks
+      
+      // Process code blocks with proper spacing
+      .replace(/```(\w+)?\n([\s\S]*?)```/g, (_match, lang, code) => {
+        const language = lang || 'text'
+        return `\n\n<pre class="hljs language-${language}"><code class="language-${language}">${code.trim()}</code></pre>\n\n`
+      })
+      
+      // Process inline code with spacing
+      .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
+      
+      // Process headers with proper spacing
+      .replace(/^### (.*$)/gm, '\n\n<h3 class="text-lg font-semibold mb-2">$1</h3>\n')
+      .replace(/^## (.*$)/gm, '\n\n<h2 class="text-xl font-bold mb-3">$1</h2>\n')
+      .replace(/^# (.*$)/gm, '\n\n<h1 class="text-2xl font-bold mb-4">$1</h1>\n')
+      
+      // Process lists with proper spacing
+      .replace(/^- (.*$)/gm, '\n<li class="ml-4 mb-1">$1</li>')
+      .replace(/^\d+\. (.*$)/gm, '\n<li class="ml-4 mb-1">$1</li>')
+      
+      // Process bold and italic text
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      
+      // Process blockquotes with spacing
+      .replace(/^> (.*$)/gm, '\n\n<blockquote class="border-l-4 border-blue-500 pl-4 italic text-gray-300 my-4">$1</blockquote>\n\n')
+      
+      // Process horizontal rules with spacing
+      .replace(/^---$/gm, '\n\n<hr class="my-6 border-gray-600">\n\n')
+      
+      // Final paragraph processing with proper spacing
+      .replace(/\n\n/g, '</p>\n<p>')
+      .replace(/^\s*/, '') // Remove leading whitespace
+      .replace(/\s*$/, '') // Remove trailing whitespace
+    
+    return `<div class="formatted-message"><p>${enhancedContent}</p></div>`
+  } catch {
+    return content
+  }
+}
 
 function App() {
   const [conversations, setConversations] = useState<Conversation[]>(() => loadConversations())
@@ -93,6 +126,7 @@ function App() {
   const menuRef = useRef<HTMLDivElement | null>(null)
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
   const [selectedModel, setSelectedModel] = useState('gemini-2.0-flash')
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null)
 
   useEffect(() => {
     // bootstrap first conversation if none
@@ -138,6 +172,15 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  const handleFileUpload = (file: File) => {
+    setUploadedFile(file);
+    // You can add file processing logic here if needed
+  };
+
+  const handleFileRemove = () => {
+    setUploadedFile(null);
+  };
+
   async function sendMessage() {
     const text = input.trim()
     if (!text || loading) return
@@ -155,14 +198,30 @@ function App() {
       abortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
-      const res = await fetch(`${apiBase}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+      // Create FormData if file is uploaded
+      let requestBody: string | FormData;
+      let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      
+      if (uploadedFile) {
+        const formData = new FormData();
+        formData.append('userId', activeId);
+        formData.append('message', text);
+        formData.append('selectedModel', selectedModel);
+        formData.append('file', uploadedFile);
+        requestBody = formData;
+        delete headers['Content-Type']; // Let browser set content-type for FormData
+      } else {
+        requestBody = JSON.stringify({ 
           userId: activeId, 
           message: text,
           selectedModel: selectedModel 
-        }),
+        });
+      }
+      
+      const res = await fetch(`${apiBase}/chat`, {
+        method: 'POST',
+        headers,
+        body: requestBody,
         signal: controller.signal,
       })
       const data = await res.json()
@@ -205,38 +264,6 @@ function App() {
     if (!activeId) return
     await fetch(`${apiBase}/history/${activeId}`, { method: 'DELETE' })
     setMessages([])
-  }
-
-  function renderMessage(content: string) {
-    // Check if content contains HTML tags (like image responses from backend)
-    if (content.includes('<div') || content.includes('<img') || content.includes('<button') || content.includes('<a ')) {
-      // If it's HTML content, return it directly without markdown processing
-      return content
-    }
-    
-    try {
-      // Enhanced markdown rendering with better formatting
-      const enhancedContent = content
-        .replace(/\n\n/g, '\n\n') // Ensure proper paragraph breaks
-        .replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
-          // Enhanced code block formatting
-          const language = lang || 'text'
-          return `<pre class="hljs language-${language}"><code class="language-${language}">${code.trim()}</code></pre>`
-        })
-        .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>') // Inline code
-        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>') // Bold text
-        .replace(/\*([^*]+)\*/g, '<em>$1</em>') // Italic text
-        .replace(/^### (.*$)/gm, '<h3 class="text-lg font-semibold mb-2">$1</h3>') // H3 headers
-        .replace(/^## (.*$)/gm, '<h2 class="text-xl font-bold mb-3">$1</h2>') // H2 headers
-        .replace(/^# (.*$)/gm, '<h1 class="text-2xl font-bold mb-4">$1</h1>') // H1 headers
-        .replace(/^- (.*$)/gm, '<li class="ml-4">$1</li>') // List items
-        .replace(/^\d+\. (.*$)/gm, '<li class="ml-4">$1</li>') // Numbered list items
-        .replace(/\n\n/g, '</p><p>') // Paragraph breaks
-      
-      return `<div class="formatted-message"><p>${enhancedContent}</p></div>`
-    } catch {
-      return content
-    }
   }
 
   useEffect(() => {
@@ -445,12 +472,20 @@ function App() {
 
   return (
     <div className="h-full w-full flex">
-      <aside className={`${sidebarOpen ? 'flex' : 'hidden'} md:flex md:w-64 lg:w-72 xl:w-80 border-r border-gray-800 flex-col p-4 gap-3`}>
+      {/* Mobile Overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
+      <aside className={`${sidebarOpen ? 'flex' : 'hidden'} md:flex md:w-64 lg:w-72 xl:w-80 border-r border-gray-800 flex-col p-4 gap-3 bg-gray-950/95 backdrop-blur-sm transition-all duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:relative z-50 h-full`}>
         <div className="flex items-center gap-3 mb-2">
-          <button onClick={newChat} className="flex items-center gap-3">
-            <img className="h-8 w-8 rounded logo-icon" src="https://portfolioimageadsfasdf.blob.core.windows.net/applicationphoto/Lahsiv_logo.png" alt="LahsivGPT Logo" />
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+            <img className="h-8 w-8 rounded logo-icon" src="https://portfolioimageadsfasdf.blob.core.windows.net/applicationphoto/Lahsiv_logo.png" alt="LashivGPT Logo" />
           </button>
-          <img className="h-6 logo-wordmark" src="https://portfolioimageadsfasdf.blob.core.windows.net/applicationphoto/lahsiv-font.png" alt="LahsivGPT " />
+          <img className="h-6 logo-wordmark" src="https://portfolioimageadsfasdf.blob.core.windows.net/applicationphoto/lahsiv-font.png" alt="LashivGPT" />
         </div>
         <button onClick={newChat} className="w-full text-left px-3 py-2 rounded bg-gray-900 hover:bg-gray-800">+ New chat</button>
         <div className="mt-2 text-xs text-gray-400">Conversations</div>
@@ -534,8 +569,16 @@ function App() {
       <div className="flex-1 h-full flex flex-col">
       <header className="border-b border-gray-800 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-1 rounded hover:bg-gray-800">
-              {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            <button 
+              onClick={() => setSidebarOpen(!sidebarOpen)} 
+              className="p-2 rounded-lg hover:bg-gray-800 transition-all duration-200 group border border-gray-700 hover:border-gray-600 sidebar-toggle-btn"
+              title={sidebarOpen ? "Close Sidebar" : "Open Sidebar"}
+            >
+              {sidebarOpen ? (
+                <X className="h-4 w-4 text-gray-400 group-hover:text-gray-200 transition-colors" />
+              ) : (
+                <Menu className="h-4 w-4 text-gray-400 group-hover:text-gray-200 transition-colors" />
+              )}
             </button>
             <span className="text-sm md:text-base font-semibold text-gray-200">LashivGPT - DevOps & Cloud</span>
           </div>
@@ -605,13 +648,59 @@ function App() {
           </div>
       </main>
         <div className="p-4 border-t border-gray-800 bg-gray-950/70">
+          {/* File Upload Display */}
+          {uploadedFile && (
+            <div className="max-w-3xl mx-auto mb-3 p-3 bg-gray-900 border border-gray-700 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-600 rounded-lg">
+                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-gray-200">{uploadedFile.name}</div>
+                    <div className="text-xs text-gray-400">
+                      {(uploadedFile.size / 1024 / 1024).toFixed(2)} MB
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={handleFileRemove}
+                  className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors"
+                  title="Remove file"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+          
           <div className="max-w-3xl mx-auto flex items-end gap-2">
+            {/* File Upload Button */}
+            <label className="cursor-pointer p-2 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800 hover:border-gray-600 transition-colors">
+              <input
+                type="file"
+                className="hidden"
+                accept=".pdf,.txt,.md,.csv,.json,.xml,.html,.css,.js,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleFileUpload(file);
+                }}
+              />
+              <svg className="w-5 h-5 text-gray-400 hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+            </label>
+            
             <textarea
               ref={textareaRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-              placeholder="Ask about DevOps, Kubernetes, AWS, Azure, GCP, CI/CD, Security..."
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={uploadedFile ? `Ask about ${uploadedFile.name}...` : "Ask about DevOps, Kubernetes, AWS, Azure, GCP, CI/CD, Security..."}
               rows={1}
               className="flex-1 rounded border border-gray-700 bg-gray-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
             />
@@ -621,7 +710,9 @@ function App() {
               <button onClick={sendMessage} disabled={!input.trim()} className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50">Send</button>
             )}
           </div>
-          <div className="max-w-3xl mx-auto mt-2 text-xs text-gray-500">Press Enter to send, Shift+Enter for new line.</div>
+          <div className="max-w-3xl mx-auto mt-2 text-xs text-gray-500">
+            {uploadedFile ? `File uploaded: ${uploadedFile.name} • ` : ''}Press Enter to send, Shift+Enter for new line.
+          </div>
         </div>
       </div>
       

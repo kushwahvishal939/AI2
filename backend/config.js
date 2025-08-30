@@ -1,5 +1,12 @@
 // API Configuration and Rate Limiting Settings
 export const config = {
+  // URL Configuration
+  urls: {
+    backend: process.env.BACKEND_URL || 'http://localhost:8080',
+    frontend: process.env.FRONTEND_URL || 'http://localhost:5173',
+    api: process.env.API_BASE_URL || 'http://localhost:8080/api',
+  },
+  
   // Gemini API Settings
   gemini: {
     models: {

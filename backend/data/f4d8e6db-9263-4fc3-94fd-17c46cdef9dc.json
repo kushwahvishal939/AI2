@@ -1,0 +1,12 @@
+[
+  {
+    "role": "user",
+    "content": "HI chatgpt",
+    "ts": 1756532152278
+  },
+  {
+    "role": "assistant",
+    "content": "I'm not ChatGPT, I'm LashivGPT, your specialized DevOps and Cloud Infrastructure AI assistant. How can I help you with your DevOps, Platform Engineering, or Cloud Infrastructure needs today?\n",
+    "ts": 1756532152278
+  }
+]

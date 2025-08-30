@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Copy, Edit, Check, X, Play, Download } from 'lucide-react';
+import { Copy, Edit, Check, Download } from 'lucide-react';
 
 interface CodeEditorProps {
   code: string;

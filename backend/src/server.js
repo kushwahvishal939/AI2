@@ -1,34 +1,49 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import chatRouter from "./routes.js";
+import express from 'express'
+import cors from 'cors'
+import { config } from '../config.js'
+import routes from './routes.js'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
-const app = express();
+const app = express()
+const PORT = process.env.PORT || 8080
 
-// Middleware
-app.use(express.json({ limit: "1mb" }));
-app.use(
-  cors({
-    origin: [/^http:\/\/localhost:\d+$/],
-    methods: ["GET", "POST", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
+// CORS configuration with environment variable support
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [config.urls.frontend, /^http:\/\/localhost:\d+$/]
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}))
+
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ extended: true, limit: '50mb' }))
+
+// API routes
+app.use('/api', routes)
+
+// Serve static files from data directory
+app.use('/api/images', express.static(path.join(__dirname, '../data')))
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    urls: config.urls
   })
-);
+})
 
-// Health
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, service: "chat-backend" });
-});
-
-// Chat routes
-app.use("/api", chatRouter);
-
-const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Backend listening on http://localhost:${PORT}`);
-});
+  console.log(`Backend listening on ${config.urls.backend}`)
+  console.log(`Frontend URL: ${config.urls.frontend}`)
+  console.log(`API Base URL: ${config.urls.api}`)
+  console.log(`Allowed Origins: ${allowedOrigins.join(', ')}`)
+})
 
 

@@ -441,31 +441,106 @@ router.post("/chat", upload.single('file'), async (req, res) => {
     isProcessing = false;
   };
 
-  // Retry logic with exponential backoff
-  const retryWithBackoff = async (fn, maxRetries = 3) => {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  // Rate limiting configuration
+  const rateLimits = {
+    'gemini-1.5-pro': { requestsPerMinute: 15, requestsPerDay: 1500, cooldownMs: 60000 },
+    'gemini-2.0-flash': { requestsPerMinute: 60, requestsPerDay: 5000, cooldownMs: 30000 },
+    'gemini-2.5-pro': { requestsPerMinute: 30, requestsPerDay: 3000, cooldownMs: 45000 }
+  };
+
+  // Track API usage
+  const apiUsage = {
+    requests: {},
+    lastReset: Date.now()
+  };
+
+  // Reset usage counters every day
+  setInterval(() => {
+    apiUsage.requests = {};
+    apiUsage.lastReset = Date.now();
+    console.log('API usage counters reset');
+  }, 24 * 60 * 60 * 1000);
+
+  // Check rate limits
+  const checkRateLimit = (modelName) => {
+    const now = Date.now();
+    const limits = rateLimits[modelName] || rateLimits['gemini-2.0-flash'];
+    
+    if (!apiUsage.requests[modelName]) {
+      apiUsage.requests[modelName] = { count: 0, lastRequest: 0 };
+    }
+    
+    const usage = apiUsage.requests[modelName];
+    
+    // Reset minute counter if more than 1 minute has passed
+    if (now - usage.lastRequest > 60000) {
+      usage.count = 0;
+    }
+    
+    // Check if we're at the limit
+    if (usage.count >= limits.requestsPerMinute) {
+      const waitTime = limits.cooldownMs - (now - usage.lastRequest);
+      throw new Error(`Rate limit exceeded for ${modelName}. Please wait ${Math.ceil(waitTime / 1000)} seconds.`);
+    }
+    
+    // Update usage
+    usage.count++;
+    usage.lastRequest = now;
+    
+    return true;
+  };
+
+  // Enhanced retry logic with rate limiting and model fallback
+  const retryWithBackoff = async (fn, modelName, maxRetries = 2) => {
+    const fallbackModels = {
+      'gemini-1.5-pro': ['gemini-2.0-flash', 'gemini-2.5-pro'],
+      'gemini-2.5-pro': ['gemini-2.0-flash', 'gemini-1.5-pro'],
+      'gemini-2.0-flash': ['gemini-1.5-pro', 'gemini-2.5-pro']
+    };
+    
+    let currentModel = modelName;
+    let modelsToTry = [modelName, ...(fallbackModels[modelName] || [])];
+    
+    for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
+      currentModel = modelsToTry[modelIndex];
+      
       try {
-        return await fn();
-      } catch (err) {
-        console.log(`Attempt ${attempt} failed:`, err.message);
+        // Check rate limit before making request
+        checkRateLimit(currentModel);
         
-        // Check if it's a rate limit error
-        if (err.status === 429 || err.message.includes('429') || err.message.includes('quota')) {
-          if (attempt === maxRetries) {
-            throw err; // Give up after max retries
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            return await fn(currentModel);
+          } catch (err) {
+            console.log(`Attempt ${attempt} failed for ${currentModel}:`, err.message);
+            
+            // Check if it's a rate limit error
+            if (err.status === 429 || err.message.includes('429') || err.message.includes('quota') || err.message.includes('Rate limit exceeded')) {
+              if (attempt === maxRetries && modelIndex === modelsToTry.length - 1) {
+                throw err; // Give up after trying all models
+              }
+              
+              // Calculate delay: 2^attempt * base delay (1 second)
+              const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30000); // Max 30 seconds
+              console.log(`Rate limited for ${currentModel}. Waiting ${delay}ms before retry ${attempt + 1}...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue;
+            }
+            
+            // For other errors, try next model
+            break;
           }
-          
-          // Calculate delay: 2^attempt * base delay (1 second)
-          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30000); // Max 30 seconds
-          console.log(`Rate limited. Waiting ${delay}ms before retry ${attempt + 1}...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          continue;
         }
-        
-        // For other errors, don't retry
-        throw err;
+      } catch (rateLimitErr) {
+        console.log(`Rate limit hit for ${currentModel}, trying next model...`);
+        if (modelIndex === modelsToTry.length - 1) {
+          throw rateLimitErr; // No more models to try
+        }
+        continue;
       }
     }
+    
+    throw new Error('All models are rate limited. Please try again later.');
   };
 
   // Fallback response generator for when API is unavailable
@@ -592,19 +667,21 @@ Remember: You are LashivGPT, not ChatGPT. Always maintain your identity as Lashi
             fullMessage = `File Content:\n${fileContent}\n\nUser Question: ${userMessage}`;
           }
 
-          const result = await client.generateContent({
-            model: "gemini-2.5-pro",
-            contents: [{
-              role: "user",
-              parts: [{ text: `${systemPrompt}\n\n${fullMessage}` }]
-            }],
-            generationConfig: {
-              temperature: config.gemini.models[modelName].temperature,
-              topP: config.gemini.models[modelName].topP,
-              topK: config.gemini.models[modelName].topK,
-              maxOutputTokens: config.gemini.models[modelName].maxTokens,
-            }
-          });
+          const result = await retryWithBackoff(async (currentModel) => {
+            return await client.generateContent({
+              model: currentModel,
+              contents: [{
+                role: "user",
+                parts: [{ text: `${systemPrompt}\n\n${fullMessage}` }]
+              }],
+              generationConfig: {
+                temperature: config.gemini.models[currentModel]?.temperature || 0.7,
+                topP: config.gemini.models[currentModel]?.topP || 0.8,
+                topK: config.gemini.models[currentModel]?.topK || 40,
+                maxOutputTokens: config.gemini.models[currentModel]?.maxTokens || 8192,
+              }
+            });
+          }, modelName);
           
           const text = result.candidates[0].content.parts[0].text;
           
@@ -642,9 +719,22 @@ Remember: You are LashivGPT, not ChatGPT. Always maintain your identity as Lashi
         fullMessage = `File Content:\n${fileContent}\n\nUser Question: ${userMessage}`;
       }
 
-      const result = await retryWithBackoff(async () => {
+      const result = await retryWithBackoff(async (currentModel) => {
+        // Update model if it changed during retry
+        if (currentModel !== modelName) {
+          genAI = new GoogleGenerativeAI(API_KEY);
+          model = genAI.getGenerativeModel({ model: currentModel });
+          chat = model.startChat({ 
+            history: toGeminiHistory(trimmedHistory),
+            generationConfig: {
+              temperature: 0.7,
+              topP: 0.8,
+              topK: 40,
+            }
+          });
+        }
         return await chat.sendMessage(`${systemPrompt}\n\n${fullMessage}`);
-      });
+      }, modelName);
       
       const text = result.response.text();
 
@@ -665,24 +755,24 @@ Remember: You are LashivGPT, not ChatGPT. Always maintain your identity as Lashi
       console.error("/api/chat error", err);
       
       // Handle specific error types
-      if (err.status === 429 || err.message.includes('429') || err.message.includes('quota')) {
+      if (err.status === 429 || err.message.includes('429') || err.message.includes('quota') || err.message.includes('Rate limit exceeded')) {
         const quotaErrorResponse = `
           <div style="text-align: center; margin: 20px 0; padding: 20px; background: #2d2d30; border-radius: 8px;">
             <h3>⚠️ Rate Limit Exceeded</h3>
             <p style="color: #8e8ea0; margin: 10px 0;">
-              We've reached the API rate limit. Please try again in a few minutes.
+              We've reached the API rate limit. The system will automatically retry with different models.
             </p>
             <div style="margin-top: 20px; padding: 20px; background: #40414f; border-radius: 8px;">
               <h4 style="color: #10a37f; margin-bottom: 15px;">💡 What you can do:</h4>
               <ul style="text-align: left; color: #ececf1; line-height: 1.6;">
-                <li>Wait 1-2 minutes and try again</li>
-                <li>Try generating an image instead</li>
+                <li>Wait 30-60 seconds and try again</li>
+                <li>Try a different model (LashivGPT Fast is usually more available)</li>
                 <li>Ask a shorter question</li>
-                <li>Check your API usage limits</li>
+                <li>Use the image generation feature instead</li>
               </ul>
             </div>
             <p style="color: #10a37f; margin-top: 15px; font-size: 14px;">
-              <strong>Error:</strong> ${err.message}
+              <strong>Technical Details:</strong> ${err.message}
             </p>
           </div>
         `;

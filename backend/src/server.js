@@ -14,7 +14,15 @@ const PORT = process.env.PORT || 8080
 // CORS configuration with environment variable support
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-  : [config.urls.frontend, /^http:\/\/localhost:\d+$/]
+  : [
+      config.urls.frontend, 
+      'https://ai2-frontend-kccz.onrender.com',
+      'https://devopsservices.in',
+      'https://api.devopsservices.in',
+      'https://www.devopsservices.in',
+      /^http:\/\/localhost:\d+$/,
+      /^https:\/\/.*\.onrender\.com$/
+    ]
 
 app.use(cors({
   origin: allowedOrigins,

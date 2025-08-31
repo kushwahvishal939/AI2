@@ -2,9 +2,9 @@
 export const config = {
   // URL Configuration
   urls: {
-    backend: process.env.BACKEND_URL || 'http://localhost:8080',
-    frontend: process.env.FRONTEND_URL || 'http://localhost:5173',
-    api: process.env.API_BASE_URL || 'http://localhost:8080/api',
+    backend: process.env.BACKEND_URL || 'https://ai2-bm1g.onrender.com',
+    frontend: process.env.FRONTEND_URL || 'https://ai2-frontend-kccz.onrender.com',
+    api: process.env.API_BASE_URL || 'https://ai2-bm1g.onrender.com/api',
   },
   
   // Gemini API Settings

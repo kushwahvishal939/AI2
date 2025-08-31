@@ -15,37 +15,17 @@ const PORT = process.env.PORT || 8080
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
   : [
-      config.urls.frontend, 
       'https://ai2-frontend-kccz.onrender.com',
       'https://devopsservices.in',
       'https://api.devopsservices.in',
       'https://www.devopsservices.in',
-      /^http:\/\/localhost:\d+$/,
-      /^https:\/\/.*\.onrender\.com$/
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://localhost:8080'
     ]
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Check if origin is in allowed list
-    const isAllowed = allowedOrigins.some(allowedOrigin => {
-      if (typeof allowedOrigin === 'string') {
-        return origin === allowedOrigin;
-      } else if (allowedOrigin instanceof RegExp) {
-        return allowedOrigin.test(origin);
-      }
-      return false;
-    });
-    
-    if (isAllowed) {
-      callback(null, true);
-    } else {
-      console.log('CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: allowedOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -92,7 +72,8 @@ app.listen(PORT, () => {
   console.log(`Backend listening on ${config.urls.backend}`)
   console.log(`Frontend URL: ${config.urls.frontend}`)
   console.log(`API Base URL: ${config.urls.api}`)
-  console.log(`Allowed Origins: ${allowedOrigins.join(', ')}`)
+  console.log(`Allowed Origins: ${allowedOrigins.filter(origin => typeof origin === 'string').join(', ')}`)
+  console.log(`Regex Patterns: ${allowedOrigins.filter(origin => origin instanceof RegExp).map(r => r.source).join(', ')}`)
 })
 
 

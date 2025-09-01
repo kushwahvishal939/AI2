@@ -275,7 +275,8 @@ router.post("/chat", upload.single('file'), async (req, res) => {
         const imageDataUrl = `data:image/png;base64,${imageBase64}`;
         
         // Create a response that uses the saved image file instead of base64
-        const imageUrl = `${config.urls.api.replace('/api', '')}/api/images/${filename}`;
+        // const imageUrl = `${config.urls.api.replace('/api', '')}/api/images/${filename}`;
+        const imageUrl = `${import.meta.env.VITE_API_BASE_URL.replace(/\/api$/, '')}/api/images/${filename}`;
         const imageResponse = `
           <div style="text-align: center; margin: 20px 0;">
             <h3>🎨 Generated Image for: "${userMessage}"</h3>

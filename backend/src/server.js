@@ -25,13 +25,21 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
     ]
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   preflightContinue: false,
   optionsSuccessStatus: 204
-}))
+}));
 
 // Handle preflight requests
 app.options('*', cors());
@@ -56,7 +64,8 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Backend listening on ${config.urls.backend}`)
-  console.log(`Frontend URL: ${config.urls.frontend}`)
+
+})  console.log(`Frontend URL: ${config.urls.frontend}`)
   console.log(`API Base URL: ${config.urls.api}`)
   console.log(`Allowed Origins: ${allowedOrigins.filter(origin => typeof origin === 'string').join(', ')}`)
   console.log(`Regex Patterns: ${allowedOrigins.filter(origin => origin instanceof RegExp).map(r => r.source).join(', ')}`)

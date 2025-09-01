@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon src/server-minimal.js",
-    "start": "node src/server-minimal.js"
+    "dev": "nodemon src/server-ultra-simple.js",
+    "start": "node src/server-ultra-simple.js"
   },
   "keywords": [],
   "author": "",
@@ -16,7 +16,7 @@
     "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
-    "express": "^5.1.0",
+    "express": "^4.19.2",
     "multer": "^2.0.2",
     "node-fetch": "^3.3.2"
   },

@@ -64,8 +64,7 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Backend listening on ${config.urls.backend}`)
-
-})  console.log(`Frontend URL: ${config.urls.frontend}`)
+  console.log(`Frontend URL: ${config.urls.frontend}`)
   console.log(`API Base URL: ${config.urls.api}`)
   console.log(`Allowed Origins: ${allowedOrigins.filter(origin => typeof origin === 'string').join(', ')}`)
   console.log(`Regex Patterns: ${allowedOrigins.filter(origin => origin instanceof RegExp).map(r => r.source).join(', ')}`)

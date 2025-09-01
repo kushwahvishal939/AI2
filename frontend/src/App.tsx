@@ -146,8 +146,11 @@ function App() {
     fetch(`${apiBase}/history/${activeId}`)
       .then(r => r.json())
       .then(data => {
-        if (Array.isArray(data?.history)) setMessages(data.history)
-        else setMessages([])
+        if (Array.isArray(data?.history) && data.history.length > 0) {
+          setMessages(data.history)
+        } else {
+          setMessages([])
+        }
       })
       .catch(() => setMessages([]))
   }, [activeId])
@@ -226,6 +229,7 @@ function App() {
         signal: controller.signal,
       })
       const data = await res.json()
+      console.log('Backend response:', data) // Debug log
       if (!res.ok) throw new Error(data?.error || 'Request failed')
       
       // Handle image data if present
@@ -241,8 +245,15 @@ function App() {
         }
       }
       
-      if (Array.isArray(data?.history)) setMessages(data.history)
-      else if (data?.reply) setMessages(prev => [...prev, { role: 'assistant', content: data.reply, ts: Date.now() }])
+      if (Array.isArray(data?.history) && data.history.length > 0) {
+        console.log('Using history from backend:', data.history)
+        setMessages(data.history)
+      } else if (data?.reply) {
+        console.log('Using reply from backend:', data.reply)
+        setMessages(prev => [...prev, { role: 'assistant', content: data.reply, ts: Date.now() }])
+      } else {
+        console.log('No valid response data found')
+      }
     } catch (err) {
       if ((err as any)?.name === 'AbortError') {
         // silently ignore aborted requests

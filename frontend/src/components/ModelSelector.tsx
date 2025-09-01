@@ -25,18 +25,57 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [models, setModels] = useState<Record<string, Model>>({});
   const [defaultModel, setDefaultModel] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchModels = async () => {
       try {
+        setLoading(true);
+        setError(null);
         const response = await fetch(getApiUrl('/models'))
         if (response.ok) {
           const data = await response.json()
+          console.log('Fetched models:', data); // Debug log
           setModels(data.models || {})
-          setDefaultModel(data.defaultModel || '')
+          setDefaultModel(data.defaultModel || 'gemini-2.0-flash')
+        } else {
+          setError(`HTTP ${response.status}: ${response.statusText}`);
         }
       } catch (error) {
         console.error('Error fetching models:', error)
+        setError(error instanceof Error ? error.message : 'Unknown error');
+        
+        // Set fallback models if API fails
+        setModels({
+          "gemini-2.0-flash": { 
+            name: "LashivGPT Fast",
+            description: "Quick and efficient responses",
+            maxTokens: 8192,
+            temperature: 0.7,
+            topP: 0.8,
+            topK: 40
+          },
+          "gemini-2.5-pro": { 
+            name: "LashivGPT Pro",
+            description: "Most advanced AI",
+            maxTokens: 32768,
+            temperature: 0.7,
+            topP: 0.8,
+            topK: 40
+          },
+          "gemini-1.5-pro": { 
+            name: "LashivGPT Standard",
+            description: "Balanced performance",
+            maxTokens: 16384,
+            temperature: 0.7,
+            topP: 0.8,
+            topK: 40
+          }
+        });
+        setDefaultModel('gemini-2.0-flash');
+      } finally {
+        setLoading(false);
       }
     }
 
@@ -69,7 +108,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     }
   };
 
-  const selectedModelData = models[selectedModel] || models[defaultModel];
+  const selectedModelData = models[selectedModel] || models[defaultModel] || {
+    name: 'LashivGPT Fast',
+    description: 'Quick and efficient responses',
+    maxTokens: 8192,
+    temperature: 0.7,
+    topP: 0.8,
+    topK: 40
+  };
 
   return (
     <div className="relative">
@@ -86,8 +132,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       >
         {getModelIcon(selectedModel)}
         <div className="text-left">
-          <div className="text-sm font-medium">{selectedModelData?.name || 'Loading...'}</div>
-          <div className="text-xs text-gray-400">{selectedModelData?.description || ''}</div>
+          <div className="text-sm font-medium">
+            {loading ? 'Loading...' : error ? 'Error' : selectedModelData?.name || 'No Model'}
+          </div>
+          <div className="text-xs text-gray-400">
+            {loading ? 'Fetching models...' : error ? error : selectedModelData?.description || ''}
+          </div>
         </div>
         {getModelBadge(selectedModel)}
         <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
@@ -100,37 +150,56 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             <p className="text-xs text-gray-400">Choose the model that best fits your needs</p>
           </div>
           <div className="max-h-64 overflow-y-auto">
-            {Object.entries(models).map(([key, model]) => (
-              <button
-                key={key}
-                onClick={() => {
-                  onModelChange(key);
-                  setIsOpen(false);
-                }}
-                className={`
-                  w-full p-3 text-left border-l-4 transition-all duration-200 hover:bg-gray-700
-                  ${key === selectedModel 
-                    ? 'border-blue-500 bg-blue-900/20' 
-                    : 'border-transparent'
-                  }
-                `}
-              >
-                <div className="flex items-start gap-3">
-                  {getModelIcon(key)}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium text-gray-200">{model.name}</span>
-                      {getModelBadge(key)}
+            {Object.keys(models).length === 0 && !loading ? (
+              <div className="p-4 text-center text-gray-400">
+                <p>No models available</p>
+                <p className="text-xs mt-1">Using fallback models</p>
+              </div>
+            ) : (
+              Object.entries(models).map(([key, model]) => {
+                // Ensure model has all required properties
+                const safeModel = {
+                  name: model?.name || 'Unknown Model',
+                  description: model?.description || 'No description available',
+                  maxTokens: model?.maxTokens || 0,
+                  temperature: model?.temperature || 0,
+                  topP: model?.topP || 0,
+                  topK: model?.topK || 0
+                };
+                
+                return (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      onModelChange(key);
+                      setIsOpen(false);
+                    }}
+                    className={`
+                      w-full p-3 text-left border-l-4 transition-all duration-200 hover:bg-gray-700
+                      ${key === selectedModel 
+                        ? 'border-blue-500 bg-blue-900/20' 
+                        : 'border-transparent'
+                      }
+                    `}
+                  >
+                    <div className="flex items-start gap-3">
+                      {getModelIcon(key)}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-medium text-gray-200">{safeModel.name}</span>
+                          {getModelBadge(key)}
+                        </div>
+                        <p className="text-xs text-gray-400 mb-2">{safeModel.description}</p>
+                        <div className="flex items-center gap-4 text-xs text-gray-500">
+                          <span>Max: {safeModel.maxTokens.toLocaleString()} tokens</span>
+                          <span>Temp: {safeModel.temperature}</span>
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-400 mb-2">{model.description}</p>
-                    <div className="flex items-center gap-4 text-xs text-gray-500">
-                      <span>Max: {model.maxTokens.toLocaleString()} tokens</span>
-                      <span>Temp: {model.temperature}</span>
-                    </div>
-                  </div>
-                </div>
-              </button>
-            ))}
+                  </button>
+                );
+              })
+            )}
           </div>
           <div className="p-3 border-t border-gray-700 bg-gray-900/50">
             <div className="text-xs text-gray-400">

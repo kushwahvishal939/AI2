@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import copy from 'copy-to-clipboard'
 import { Menu, X, MoreVertical, Share2, Edit3, Archive, Trash2, User, Settings, LogOut } from 'lucide-react'
 import ModelSelector from './components/ModelSelector'
+import ErrorBoundary from './components/ErrorBoundary'
 import { getApiUrl } from './config'
 
 type ChatMessage = {
@@ -583,11 +584,13 @@ function App() {
             <span className="text-sm md:text-base font-semibold text-gray-200">LashivGPT - DevOps & Cloud</span>
           </div>
           <div className="flex items-center gap-3">
-            <ModelSelector
-              selectedModel={selectedModel}
-              onModelChange={setSelectedModel}
-              disabled={loading}
-            />
+            <ErrorBoundary>
+              <ModelSelector
+                selectedModel={selectedModel}
+                onModelChange={setSelectedModel}
+                disabled={loading}
+              />
+            </ErrorBoundary>
             <div className="relative">
               <button 
                 onClick={() => setProfileMenuOpen(!profileMenuOpen)}
